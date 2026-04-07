@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { 
   Plus, FileText, Search, Calendar, X, Trash2, Pencil, Loader2,
-  Settings, ArrowUpRight, ArrowDownRight, BarChart3
+  Settings, ArrowUpRight, ArrowDownRight, BarChart3, Download
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
@@ -17,7 +17,6 @@ import {
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 // --- INYECCIÓN DE TAILWIND (PARA VERCEL) ---
-// Esto asegura que los estilos se apliquen incluso si la configuración de Vite/Vercel falla
 const tailwindScript = document.createElement('script');
 tailwindScript.src = "https://cdn.tailwindcss.com";
 document.head.appendChild(tailwindScript);
@@ -122,6 +121,34 @@ const App = () => {
     { name: 'Gastos', valor: totals.gastos, color: '#f43f5e' }
   ], [totals]);
 
+  // --- FUNCIÓN PARA EXPORTAR ---
+  const exportToCSV = () => {
+    if (filteredData.length === 0) return;
+    
+    // Encabezados
+    const headers = ["Fecha", "Entidad", "Factura", "Monto", "Tipo", "Categoria"];
+    
+    // Cuerpo del CSV
+    const rows = filteredData.map(t => [
+      t.date,
+      `"${t.entity}"`,
+      `"${t.invoiceNum}"`,
+      t.amount,
+      t.type.toUpperCase(),
+      t.category
+    ]);
+
+    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Montes_Aero_Reporte_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     const payload = { ...formData, amount: parseFloat(formData.amount) || 0, updatedAt: new Date().toISOString() };
@@ -159,6 +186,13 @@ const App = () => {
             <h1 className="text-lg font-black italic uppercase tracking-tighter">MONTES <span className="text-blue-600">AERO</span></h1>
           </div>
           <div className="flex gap-2">
+            <button 
+              onClick={exportToCSV}
+              className="p-2.5 rounded-2xl border border-slate-100 bg-white text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
+              title="Exportar a CSV/Excel"
+            >
+              <Download size={18} />
+            </button>
             <button onClick={() => setShowChart(!showChart)} className={`p-2.5 rounded-2xl border transition-all ${showChart ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 border-blue-600' : 'bg-white text-slate-400 border-slate-100'}`}><BarChart3 size={18} /></button>
             <button onClick={() => setPeriod(period === 'Este Mes' ? 'Todo' : 'Este Mes')} className="px-4 py-1 bg-slate-50 border border-slate-100 rounded-2xl text-[10px] font-black uppercase flex items-center gap-1 shadow-sm">
                {period}
