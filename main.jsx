@@ -53,8 +53,9 @@ const App = () => {
     date: new Date().toISOString().split('T')[0]
   });
 
-  // Autenticación silenciosa para asegurar funcionamiento
+  // Autenticación silenciosa
   useEffect(() => {
+    let mounted = true;
     const initAuth = async () => {
       try {
         await signInAnonymously(auth);
@@ -64,13 +65,15 @@ const App = () => {
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
+      if (mounted) {
+        setUser(u);
+        setLoading(false);
+      }
     });
-    return () => unsubscribe();
+    return () => { mounted = false; unsubscribe(); };
   }, []);
 
-  // Carga de datos
+  // Carga de datos con manejo de errores para evitar bloqueos
   useEffect(() => {
     if (!user) return;
     const transCol = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
@@ -78,7 +81,9 @@ const App = () => {
       (snap) => {
         setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       },
-      (error) => console.error("Error de Firestore:", error)
+      (error) => {
+        console.error("Error de Firestore:", error);
+      }
     );
     return () => unsubTrans();
   }, [user]);
@@ -251,5 +256,11 @@ const App = () => {
   );
 };
 
-const root = createRoot(document.getElementById('root'));
-root.render(<App />);
+// Garantizamos el renderizado tras cargar la ventana
+window.onload = () => {
+  const container = document.getElementById('root');
+  if (container) {
+    const root = createRoot(container);
+    root.render(<App />);
+  }
+};
