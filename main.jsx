@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { 
   Plus, FileText, Search, X, Trash2, Pencil, Loader2,
-  ArrowUpRight, ArrowDownRight, BarChart3, Download, LogOut, Lock, Mail
+  ArrowUpRight, ArrowDownRight, BarChart3, Download, LogOut, Lock, Mail,
+  LayoutDashboard, List
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
@@ -32,7 +33,6 @@ if (!document.getElementById('tailwind-cdn')) {
   document.head.appendChild(tailwindScript);
 }
 
-// Manejo seguro de configuración global
 const firebaseConfig = (() => {
   try {
     return JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
@@ -49,12 +49,11 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'montes-aero-v1';
 const App = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState('ingresos'); 
+  const [viewMode, setViewMode] = useState('dashboard'); // 'dashboard', 'ingresos', 'gastos'
   const [transactions, setTransactions] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState(null);
-  const [showChart, setShowChart] = useState(false);
   
   // Auth states
   const [authEmail, setAuthEmail] = useState('');
@@ -68,20 +67,18 @@ const App = () => {
     category: '', date: new Date().toISOString().split('T')[0]
   });
 
-  // Inicialización de Autenticación
   useEffect(() => {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
-        } else if (!auth.currentUser) {
-          // Intentar login anónimo para que la app funcione inmediatamente
+        } else {
+          // Si no hay token, intentamos entrada anónima para no bloquear al usuario
           await signInAnonymously(auth);
         }
       } catch (e) {
-        console.error("Error auth inicial:", e);
+        console.error("Error auth:", e);
       } finally {
-        // Forzamos el fin del loading incluso si hay error para que la UI no se congele
         setLoading(false);
       }
     };
@@ -94,25 +91,15 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // Carga de datos de Firestore
   useEffect(() => {
-    if (!user) {
-      setTransactions([]);
-      return;
-    }
-
+    if (!user) return;
     const transCol = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
-    
     const unsubTrans = onSnapshot(transCol, 
       (snap) => {
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setTransactions(data);
+        setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       },
-      (error) => {
-        console.error("Firestore Error:", error);
-      }
+      (error) => console.error("Firestore Error:", error)
     );
-
     return () => unsubTrans();
   }, [user]);
 
@@ -127,40 +114,30 @@ const App = () => {
         await signInWithEmailAndPassword(auth, authEmail, authPass);
       }
     } catch (err) {
-      setAuthError('Error de acceso. Revisa tus datos.');
+      setAuthError('Credenciales incorrectas o error de conexión.');
     } finally {
       setIsAuthLoading(false);
     }
   };
 
-  const handleLogout = () => signOut(auth);
-
-  const filteredData = useMemo(() => {
-    return (transactions || []).filter(t => 
-      (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [transactions, searchTerm]);
-
   const totals = useMemo(() => {
-    const ingresos = filteredData.filter(t => t.type === 'ingreso').reduce((a, b) => a + (Number(b.amount) || 0), 0);
-    const gastos = filteredData.filter(t => t.type === 'gasto').reduce((a, b) => a + (Number(b.amount) || 0), 0);
+    const ingresos = transactions.filter(t => t.type === 'ingreso').reduce((a, b) => a + (Number(b.amount) || 0), 0);
+    const gastos = transactions.filter(t => t.type === 'gasto').reduce((a, b) => a + (Number(b.amount) || 0), 0);
     return { ingresos, gastos, margen: ingresos - gastos };
-  }, [filteredData]);
+  }, [transactions]);
 
-  const chartData = useMemo(() => [
+  const chartData = [
     { name: 'Ingresos', valor: totals.ingresos, color: '#10b981' },
     { name: 'Gastos', valor: totals.gastos, color: '#f43f5e' }
-  ], [totals]);
+  ];
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!user) return;
-    
-    if (!formData.entity || !formData.amount) return;
+    if (!user || !formData.entity || !formData.amount) return;
     
     const payload = { 
       ...formData, 
-      amount: parseFloat(formData.amount) || 0, 
+      amount: parseFloat(formData.amount), 
       updatedAt: new Date().toISOString() 
     };
     
@@ -169,196 +146,195 @@ const App = () => {
       if (editingId) {
         await updateDoc(doc(db, ...path, editingId), payload);
       } else {
-        await addDoc(collection(db, ...path), { 
-          ...payload, 
-          createdAt: new Date().toISOString() 
-        });
+        await addDoc(collection(db, ...path), { ...payload, createdAt: new Date().toISOString() });
       }
       setIsModalOpen(false);
       setEditingId(null);
-      setFormData({ 
-        entity: '', invoiceNum: '', amount: '', type: 'ingreso', 
-        category: '', date: new Date().toISOString().split('T')[0] 
-      });
-    } catch (err) { 
-      console.error("Error al guardar:", err);
-    }
+      setFormData({ entity: '', invoiceNum: '', amount: '', type: 'ingreso', category: '', date: new Date().toISOString().split('T')[0] });
+    } catch (err) { console.error(err); }
   };
 
-  // Pantalla de Carga
   if (loading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-white">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
       <Loader2 className="animate-spin text-blue-600 mb-4" size={40} />
-      <p className="text-[12px] font-black text-slate-400 uppercase tracking-[0.3em]">Cargando Sistema...</p>
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sincronizando con Montes Aero...</p>
     </div>
   );
 
-  // Pantalla de Login (si no hay usuario ni sesión anónima)
   if (!user) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl border border-slate-100 text-center">
-        <div className="bg-slate-900 w-20 h-20 rounded-3xl text-white flex items-center justify-center mx-auto mb-6 shadow-2xl rotate-3">
-          <Lock size={32} />
+    <div className="min-h-screen bg-white flex items-center justify-center p-6">
+      <div className="max-w-md w-full text-center">
+        <div className="w-24 h-24 bg-blue-600 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-blue-200 rotate-3">
+          <Lock className="text-white" size={40} />
         </div>
-        <h1 className="text-3xl font-black italic uppercase tracking-tighter text-slate-800 mb-2">
-          MONTES <span className="text-blue-600">AERO</span>
-        </h1>
-        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-10">Panel de Control</p>
-
+        <h1 className="text-4xl font-black italic uppercase tracking-tighter mb-2">MONTES <span className="text-blue-600">AERO</span></h1>
+        <p className="text-slate-400 font-bold text-sm mb-10">Inicia sesión para gestionar tus finanzas aéreas</p>
         <form onSubmit={handleAuth} className="space-y-4">
-          <input required type="email" placeholder="Email" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
-          <input required type="password" placeholder="Contraseña" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all" value={authPass} onChange={e => setAuthPass(e.target.value)} />
-          {authError && <p className="text-rose-500 text-[10px] font-black uppercase bg-rose-50 p-3 rounded-xl">{authError}</p>}
-          <button disabled={isAuthLoading} type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-lg">
-            {isAuthLoading ? 'Cargando...' : (isRegistering ? 'Crear Cuenta' : 'Entrar')}
+          <input required type="email" placeholder="Correo electrónico" className="w-full px-8 py-5 bg-slate-50 border-none rounded-3xl font-bold outline-none focus:ring-4 focus:ring-blue-50 transition-all" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+          <input required type="password" placeholder="Contraseña" className="w-full px-8 py-5 bg-slate-50 border-none rounded-3xl font-bold outline-none focus:ring-4 focus:ring-blue-50 transition-all" value={authPass} onChange={e => setAuthPass(e.target.value)} />
+          {authError && <div className="p-4 bg-rose-50 text-rose-600 text-xs font-bold rounded-2xl">{authError}</div>}
+          <button disabled={isAuthLoading} className="w-full py-5 bg-slate-900 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all">
+            {isAuthLoading ? 'Cargando...' : (isRegistering ? 'Crear Cuenta' : 'Entrar al Sistema')}
           </button>
         </form>
-        <button onClick={() => setIsRegistering(!isRegistering)} className="mt-8 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600 block w-full text-center">
-          {isRegistering ? '¿Ya eres miembro? Inicia sesión' : '¿Nuevo aquí? Regístrate'}
+        <button onClick={() => setIsRegistering(!isRegistering)} className="mt-8 text-[11px] font-black text-slate-400 uppercase tracking-widest">
+          {isRegistering ? '¿Ya tienes cuenta? Conéctate' : '¿No tienes acceso? Solicítalo aquí'}
         </button>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] pb-24 font-sans text-slate-900 overflow-x-hidden">
-      {/* Header */}
-      <header className="bg-white border-b p-4 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-xl mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-black italic uppercase tracking-tighter">MONTES <span className="text-blue-600">AERO</span></h1>
-          <div className="flex gap-2">
-            <button onClick={() => setShowChart(!showChart)} className={`p-3 rounded-2xl border transition-all ${showChart ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-white text-slate-400 border-slate-100'}`}><BarChart3 size={20} /></button>
-            <button onClick={handleLogout} className="p-3 rounded-2xl border border-slate-100 bg-white text-rose-600 hover:bg-rose-50 transition-all"><LogOut size={20} /></button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-xl mx-auto p-4 space-y-6">
-        {/* Card de Balance */}
-        <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden group">
-          <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-600/30 rounded-full blur-[80px]"></div>
-          <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.25em] block mb-2">Balance Neto Disponible</span>
-          <div className="text-5xl font-black mb-8 tracking-tighter">${totals.margen.toLocaleString()}</div>
-          <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-8">
-            <div className="bg-white/5 p-4 rounded-3xl backdrop-blur-md border border-white/5">
-              <div className="flex items-center gap-2 text-emerald-400 text-[10px] font-black uppercase mb-1"><ArrowUpRight size={14}/> Ingresos</div>
-              <span className="font-black text-xl">${totals.ingresos.toLocaleString()}</span>
+    <div className="min-h-screen bg-[#F8FAFC] font-sans text-slate-900">
+      {/* Navbar Superior */}
+      <nav className="bg-white/80 backdrop-blur-md border-b sticky top-0 z-[40] px-6 py-4">
+        <div className="max-w-5xl mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-100">
+              <LayoutDashboard size={20} />
             </div>
-            <div className="bg-white/5 p-4 rounded-3xl backdrop-blur-md border border-white/5">
-              <div className="flex items-center gap-2 text-rose-400 text-[10px] font-black uppercase mb-1"><ArrowDownRight size={14}/> Gastos</div>
-              <span className="font-black text-xl">${totals.gastos.toLocaleString()}</span>
+            <h1 className="text-lg font-black italic uppercase tracking-tighter">MONTES <span className="text-blue-600">AERO</span></h1>
+          </div>
+          <button onClick={() => signOut(auth)} className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:text-rose-500 transition-colors">
+            <LogOut size={20} />
+          </button>
+        </div>
+      </nav>
+
+      <main className="max-w-2xl mx-auto p-6 space-y-8 pb-32">
+        {/* Resumen de Inicio */}
+        <section className="bg-slate-900 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/20 rounded-full blur-[100px] -mr-32 -mt-32"></div>
+          <p className="text-[10px] font-black text-blue-400 uppercase tracking-[0.4em] mb-4">Balance General</p>
+          <h2 className="text-5xl font-black tracking-tighter mb-10">${totals.margen.toLocaleString()}</h2>
+          
+          <div className="grid grid-cols-2 gap-6">
+            <div className="bg-white/5 border border-white/10 p-5 rounded-3xl backdrop-blur-sm">
+              <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                <ArrowUpRight size={14}/> Total Ingresos
+              </p>
+              <p className="text-2xl font-black">${totals.ingresos.toLocaleString()}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 p-5 rounded-3xl backdrop-blur-sm">
+              <p className="text-[9px] font-black text-rose-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                <ArrowDownRight size={14}/> Total Gastos
+              </p>
+              <p className="text-2xl font-black">${totals.gastos.toLocaleString()}</p>
             </div>
           </div>
+        </section>
+
+        {/* Gráfico de Rendimiento */}
+        <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm h-72">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-8 text-center">Comparativa de Flujo</p>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData}>
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 900, fill: '#94a3b8'}} />
+              <Tooltip cursor={{fill: 'transparent'}} contentStyle={{borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)'}} />
+              <Bar dataKey="valor" radius={[20, 20, 20, 20]} barSize={50}>
+                {chartData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
 
-        {/* Gráfico */}
-        {showChart && (
-          <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 h-64 shadow-xl transition-all animate-in fade-in zoom-in duration-300">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <XAxis dataKey="name" hide />
-                <Tooltip cursor={{fill: 'transparent'}} contentStyle={{borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
-                <Bar dataKey="valor" radius={[15, 15, 15, 15]} barSize={60}>
-                  {chartData.map((e, i) => <Cell key={i} fill={e.color} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* Selectores y Búsqueda */}
-        <div className="flex p-1.5 bg-slate-100 rounded-[1.5rem] shadow-inner mb-2">
-          <button onClick={() => setViewMode('ingresos')} className={`flex-1 py-4 rounded-[1.2rem] font-black text-[11px] tracking-widest transition-all ${viewMode === 'ingresos' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>INGRESOS</button>
-          <button onClick={() => setViewMode('gastos')} className={`flex-1 py-4 rounded-[1.2rem] font-black text-[11px] tracking-widest transition-all ${viewMode === 'gastos' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}>GASTOS</button>
-        </div>
-
-        <div className="relative group">
-          <Search size={16} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
-          <input type="text" placeholder="Buscar por entidad o cliente..." className="pl-12 pr-6 py-5 bg-white border border-slate-100 rounded-[2rem] text-sm font-bold w-full outline-none focus:border-blue-200 shadow-sm transition-all focus:shadow-md" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-        </div>
-
-        {/* Lista de Transacciones */}
+        {/* Listado de Actividad Reciente */}
         <div className="space-y-4">
-          {filteredData.filter(t => t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto')).length === 0 && (
-            <div className="text-center py-20 opacity-20 font-black uppercase text-[11px] tracking-[0.3em]">No hay registros para mostrar</div>
-          )}
-          {filteredData.filter(t => t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto')).map(t => (
-            <div key={t.id} className="bg-white p-6 rounded-[2.2rem] border border-slate-100 flex justify-between items-center shadow-sm hover:shadow-md hover:translate-x-1 transition-all">
-              <div className="flex items-center gap-5">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ${t.type === 'ingreso' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                  {t.type === 'ingreso' ? <ArrowUpRight size={22} /> : <ArrowDownRight size={22} />}
-                </div>
-                <div>
-                  <div className="font-black text-slate-800 text-base tracking-tight">{t.entity}</div>
-                  <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Fact: {t.invoiceNum || 'N/A'} • {t.date}</div>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className={`font-black text-lg ${t.type === 'ingreso' ? 'text-emerald-600' : 'text-rose-600'}`}>${Number(t.amount).toLocaleString()}</div>
-                <div className="flex gap-4 mt-3 justify-end">
-                  <button onClick={() => { setEditingId(t.id); setFormData(t); setIsModalOpen(true); }} className="text-slate-200 hover:text-blue-600 transition-colors"><Pencil size={18} /></button>
-                  <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', t.id))} className="text-slate-200 hover:text-rose-600 transition-colors"><Trash2 size={18} /></button>
-                </div>
-              </div>
+          <div className="flex justify-between items-center px-2">
+            <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest">Actividad Reciente</h3>
+            <div className="flex p-1 bg-slate-100 rounded-2xl">
+              <button onClick={() => setViewMode('dashboard')} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${viewMode === 'dashboard' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400'}`}>TODOS</button>
+              <button onClick={() => setViewMode('ingresos')} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${viewMode === 'ingresos' ? 'bg-white shadow-sm text-emerald-600' : 'text-slate-400'}`}>INGRESOS</button>
+              <button onClick={() => setViewMode('gastos')} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${viewMode === 'gastos' ? 'bg-white shadow-sm text-rose-600' : 'text-slate-400'}`}>GASTOS</button>
             </div>
-          ))}
+          </div>
+
+          <div className="space-y-3">
+            {transactions.filter(t => viewMode === 'dashboard' || t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto')).length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-[2.5rem] border border-dashed border-slate-200">
+                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Sin registros que mostrar</p>
+              </div>
+            ) : (
+              transactions
+                .filter(t => viewMode === 'dashboard' || t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto'))
+                .sort((a, b) => new Date(b.date) - new Date(a.date))
+                .map(t => (
+                  <div key={t.id} className="bg-white p-5 rounded-[2.5rem] border border-slate-50 flex justify-between items-center shadow-sm hover:shadow-md transition-all group">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${t.type === 'ingreso' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                        {t.type === 'ingreso' ? <ArrowUpRight size={20}/> : <ArrowDownRight size={20}/>}
+                      </div>
+                      <div>
+                        <p className="font-black text-slate-800 tracking-tight">{t.entity}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase">Factura: {t.invoiceNum} • {t.date}</p>
+                      </div>
+                    </div>
+                    <div className="text-right flex items-center gap-6">
+                      <p className={`font-black text-lg ${t.type === 'ingreso' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {t.type === 'ingreso' ? '+' : '-'}${Number(t.amount).toLocaleString()}
+                      </p>
+                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setEditingId(t.id); setFormData(t); setIsModalOpen(true); }} className="p-2 text-slate-300 hover:text-blue-600"><Pencil size={16}/></button>
+                        <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', t.id))} className="p-2 text-slate-300 hover:text-rose-600"><Trash2 size={16}/></button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
         </div>
       </main>
 
-      {/* Botón Flotante para el Formulario */}
+      {/* Botón de Acción Principal */}
       <button 
         onClick={() => { setEditingId(null); setIsModalOpen(true); }} 
-        className="fixed bottom-10 right-10 w-20 h-20 bg-blue-600 text-white rounded-3xl shadow-2xl flex items-center justify-center z-[60] hover:scale-110 active:scale-90 transition-all shadow-blue-300 ring-8 ring-white/50"
+        className="fixed bottom-10 right-1/2 translate-x-1/2 sm:translate-x-0 sm:right-10 w-20 h-20 bg-blue-600 text-white rounded-[2rem] shadow-2xl shadow-blue-200 flex items-center justify-center z-[50] hover:scale-110 active:scale-95 transition-all ring-8 ring-white"
       >
-        <Plus size={36} strokeWidth={3} />
+        <Plus size={32} strokeWidth={3} />
       </button>
 
-      {/* MODAL DEL FORMULARIO - Asegurado con z-index 100 */}
+      {/* Modal del Formulario Corregido */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full max-w-xl rounded-t-[3.5rem] sm:rounded-[3.5rem] p-10 pb-12 shadow-2xl animate-in slide-in-from-bottom duration-300">
-            <div className="flex justify-between items-center mb-10">
-              <div>
-                <h2 className="text-2xl font-black text-slate-800 uppercase italic tracking-tighter">
-                  {editingId ? 'Editar' : 'Nuevo'} Registro
-                </h2>
-                <div className="h-1 w-12 bg-blue-600 mt-1 rounded-full"></div>
-              </div>
-              <button onClick={() => setIsModalOpen(false)} className="p-4 bg-slate-100 rounded-3xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all">
-                <X size={28} />
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-end sm:items-center justify-center p-0 sm:p-6">
+          <div className="bg-white w-full max-w-xl rounded-t-[3rem] sm:rounded-[3rem] p-10 shadow-2xl animate-in slide-in-from-bottom duration-300">
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-2xl font-black italic uppercase tracking-tighter text-slate-800">
+                {editingId ? 'Editar Registro' : 'Nueva Operación'}
+              </h3>
+              <button onClick={() => setIsModalOpen(false)} className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all">
+                <X size={24} />
               </button>
             </div>
-            
+
             <form onSubmit={handleSave} className="space-y-6">
-              {/* Selector de Tipo */}
-              <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-100 rounded-[1.8rem]">
-                <button type="button" onClick={() => setFormData({...formData, type: 'ingreso'})} className={`py-5 rounded-[1.4rem] font-black text-[12px] tracking-[0.2em] transition-all ${formData.type === 'ingreso' ? 'bg-white text-emerald-600 shadow-md shadow-emerald-100' : 'text-slate-400'}`}>INGRESO</button>
-                <button type="button" onClick={() => setFormData({...formData, type: 'gasto'})} className={`py-5 rounded-[1.4rem] font-black text-[12px] tracking-[0.2em] transition-all ${formData.type === 'gasto' ? 'bg-white text-rose-600 shadow-md shadow-rose-100' : 'text-slate-400'}`}>GASTO</button>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Nombre de Entidad o Cliente</label>
-                <input required type="text" placeholder="Ej: Servicios de Pista" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-bold focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-50 outline-none transition-all" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
+              <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-100 rounded-3xl">
+                <button type="button" onClick={() => setFormData({...formData, type: 'ingreso'})} className={`py-4 rounded-2xl text-[11px] font-black tracking-widest transition-all ${formData.type === 'ingreso' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}>INGRESO</button>
+                <button type="button" onClick={() => setFormData({...formData, type: 'gasto'})} className={`py-4 rounded-2xl text-[11px] font-black tracking-widest transition-all ${formData.type === 'gasto' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}>GASTO</button>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Nº Factura</label>
-                  <input required type="text" placeholder="000-000" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-bold focus:bg-white outline-none transition-all" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Cliente o Proveedor</label>
+                  <input required type="text" className="w-full px-8 py-5 bg-slate-50 rounded-3xl font-bold outline-none border-2 border-transparent focus:border-blue-100 focus:bg-white transition-all" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Monto ($)</label>
-                  <input required type="number" step="0.01" placeholder="0.00" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-black focus:bg-white outline-none transition-all" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Nº de Factura</label>
+                    <input required type="text" className="w-full px-8 py-5 bg-slate-50 rounded-3xl font-bold outline-none focus:bg-white transition-all" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Monto Total</label>
+                    <input required type="number" step="0.01" className="w-full px-8 py-5 bg-slate-50 rounded-3xl font-black outline-none focus:bg-white transition-all" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Fecha</label>
+                  <input required type="date" className="w-full px-8 py-5 bg-slate-50 rounded-3xl font-bold outline-none focus:bg-white transition-all" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Fecha del Registro</label>
-                <input required type="date" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-bold focus:bg-white outline-none transition-all" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
-              </div>
-
-              <button type="submit" className={`w-full py-6 rounded-[2rem] font-black text-[14px] text-white uppercase tracking-[0.3em] shadow-2xl active:scale-95 transition-all mt-6 shadow-blue-200 ${formData.type === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
-                {editingId ? 'Confirmar Edición' : 'Registrar Operación'}
+              <button type="submit" className={`w-full py-6 rounded-[2rem] font-black text-white uppercase tracking-[0.3em] shadow-xl transition-all active:scale-95 ${formData.type === 'ingreso' ? 'bg-emerald-600 shadow-emerald-100' : 'bg-rose-600 shadow-rose-100'}`}>
+                {editingId ? 'Actualizar Datos' : 'Registrar Ahora'}
               </button>
             </form>
           </div>
