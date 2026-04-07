@@ -12,7 +12,7 @@ import {
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, collection, doc, onSnapshot, addDoc, 
-  updateDoc, deleteDoc, setDoc 
+  updateDoc, deleteDoc, query
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -20,7 +20,6 @@ import {
   createUserWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged,
-  signInAnonymously,
   signInWithCustomToken
 } from 'firebase/auth';
 
@@ -29,7 +28,16 @@ const tailwindScript = document.createElement('script');
 tailwindScript.src = "https://cdn.tailwindcss.com";
 document.head.appendChild(tailwindScript);
 
-const firebaseConfig = JSON.parse(__firebase_config || '{"apiKey": "temp"}');
+// Manejo seguro de configuración
+const getFirebaseConfig = () => {
+  try {
+    return JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{"apiKey": "no-key"}');
+  } catch (e) {
+    return { apiKey: "error" };
+  }
+};
+
+const firebaseConfig = getFirebaseConfig();
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -39,7 +47,6 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('ingresos'); 
-  const [period, setPeriod] = useState('Este Mes');
   const [transactions, setTransactions] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -58,7 +65,7 @@ const App = () => {
     category: '', date: new Date().toISOString().split('T')[0]
   });
 
-  // Inicialización de Autenticación
+  // Inicialización de Autenticación (REGLA 3)
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -67,8 +74,6 @@ const App = () => {
         }
       } catch (e) {
         console.error("Error en auth inicial:", e);
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -80,13 +85,14 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // Carga de datos protegida por UID
+  // Carga de datos (REGLA 1 y 2)
   useEffect(() => {
     if (!user) {
       setTransactions([]);
       return;
     }
 
+    // Ruta estricta: /artifacts/{appId}/users/{userId}/{collectionName}
     const transCol = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
     
     const unsubTrans = onSnapshot(transCol, 
@@ -113,8 +119,7 @@ const App = () => {
         await signInWithEmailAndPassword(auth, authEmail, authPass);
       }
     } catch (err) {
-      console.error(err);
-      setAuthError('Error: Verifica tus datos o que el usuario no exista ya.');
+      setAuthError('Error: Verifica tus credenciales o conexión.');
     } finally {
       setIsAuthLoading(false);
     }
@@ -123,13 +128,10 @@ const App = () => {
   const handleLogout = () => signOut(auth);
 
   const filteredData = useMemo(() => {
-    const now = new Date();
-    return (transactions || []).filter(t => {
-      const tDate = new Date(t.date);
-      if (period === 'Este Mes') return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
-      return true;
-    }).filter(t => (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [transactions, period, searchTerm]);
+    return (transactions || []).filter(t => 
+      (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [transactions, searchTerm]);
 
   const totals = useMemo(() => {
     const ingresos = filteredData.filter(t => t.type === 'ingreso').reduce((a, b) => a + (Number(b.amount) || 0), 0);
@@ -144,28 +146,33 @@ const App = () => {
 
   const exportToCSV = () => {
     if (filteredData.length === 0) return;
-    const headers = ["Fecha", "Entidad", "Factura", "Monto", "Tipo", "Categoria"];
-    const rows = filteredData.map(t => [t.date, `"${t.entity}"`, `"${t.invoiceNum}"`, t.amount, t.type.toUpperCase(), t.category]);
+    const headers = ["Fecha", "Entidad", "Factura", "Monto", "Tipo"];
+    const rows = filteredData.map(t => [t.date, `"${t.entity}"`, `"${t.invoiceNum}"`, t.amount, t.type.toUpperCase()]);
     const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `Montes_Aero_Reporte_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `Montes_Aero_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
     if (!user) return;
-    const payload = { ...formData, amount: parseFloat(formData.amount) || 0, updatedAt: new Date().toISOString() };
-    const userPath = ['artifacts', appId, 'users', user.uid, 'transactions'];
+    
+    const payload = { 
+      ...formData, 
+      amount: parseFloat(formData.amount) || 0, 
+      updatedAt: new Date().toISOString() 
+    };
     
     try {
+      const docPath = ['artifacts', appId, 'users', user.uid, 'transactions'];
       if (editingId) {
-        await updateDoc(doc(db, ...userPath, editingId), payload);
+        await updateDoc(doc(db, ...docPath, editingId), payload);
       } else {
-        await addDoc(collection(db, ...userPath), { ...payload, createdAt: new Date().toISOString() });
+        await addDoc(collection(db, ...docPath), { ...payload, createdAt: new Date().toISOString() });
       }
       setIsModalOpen(false);
       setEditingId(null);
@@ -176,9 +183,9 @@ const App = () => {
   };
 
   if (loading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-white font-sans">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-white">
       <Loader2 className="animate-spin text-blue-600 mb-4" size={40} />
-      <h1 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Iniciando sistema...</h1>
+      <h1 className="text-xs font-bold uppercase tracking-widest text-slate-400">Cargando...</h1>
     </div>
   );
 
@@ -193,29 +200,27 @@ const App = () => {
             MONTES <span className="text-blue-600">AERO</span>
           </h1>
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">
-            {isRegistering ? 'Crear nueva cuenta' : 'Acceso de Seguridad'}
+            {isRegistering ? 'Registro de cuenta' : 'Acceso de Seguridad'}
           </p>
         </div>
 
         <form onSubmit={handleAuth} className="space-y-4">
           <div className="relative">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input required type="email" placeholder="Email" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+            <input required type="email" placeholder="Correo" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
           </div>
           <div className="relative">
             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input required type="password" placeholder="Password" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all" value={authPass} onChange={e => setAuthPass(e.target.value)} />
+            <input required type="password" placeholder="Contraseña" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all" value={authPass} onChange={e => setAuthPass(e.target.value)} />
           </div>
-          
-          {authError && <p className="text-rose-500 text-[10px] font-black text-center uppercase bg-rose-50 p-2 rounded-lg">{authError}</p>}
-
-          <button disabled={isAuthLoading} type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-xl mt-4 active:scale-95 disabled:opacity-50">
-            {isAuthLoading ? 'Procesando...' : (isRegistering ? 'Crear Cuenta' : 'Ingresar')}
+          {authError && <p className="text-rose-500 text-[10px] font-bold text-center uppercase bg-rose-50 p-2 rounded-lg">{authError}</p>}
+          <button disabled={isAuthLoading} type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-xl disabled:opacity-50">
+            {isAuthLoading ? 'Cargando...' : (isRegistering ? 'Crear Cuenta' : 'Entrar')}
           </button>
         </form>
 
         <button onClick={() => setIsRegistering(!isRegistering)} className="w-full text-center mt-6 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600">
-          {isRegistering ? '¿Ya tienes cuenta? Login' : '¿No tienes cuenta? Registro'}
+          {isRegistering ? '¿Ya tienes cuenta? Ingresa aquí' : '¿No tienes cuenta? Registrate'}
         </button>
       </div>
     </div>
@@ -230,17 +235,17 @@ const App = () => {
             <h1 className="text-lg font-black italic uppercase tracking-tighter">MONTES <span className="text-blue-600">AERO</span></h1>
           </div>
           <div className="flex gap-2">
-            <button onClick={exportToCSV} className="p-2.5 rounded-2xl border border-slate-100 bg-white text-slate-600 hover:bg-slate-50 shadow-sm"><Download size={18} /></button>
+            <button onClick={exportToCSV} title="Exportar CSV" className="p-2.5 rounded-2xl border border-slate-100 bg-white text-slate-600 hover:bg-slate-50"><Download size={18} /></button>
             <button onClick={() => setShowChart(!showChart)} className={`p-2.5 rounded-2xl border transition-all ${showChart ? 'bg-blue-600 text-white' : 'bg-white text-slate-400'}`}><BarChart3 size={18} /></button>
-            <button onClick={handleLogout} className="p-2.5 rounded-2xl border border-slate-100 bg-white text-rose-600 hover:bg-rose-50 shadow-sm"><LogOut size={18} /></button>
+            <button onClick={handleLogout} className="p-2.5 rounded-2xl border border-slate-100 bg-white text-rose-600 hover:bg-rose-50"><LogOut size={18} /></button>
           </div>
         </div>
       </header>
 
       <main className="max-w-xl mx-auto p-4 space-y-5">
-        <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden group">
-          <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-600/20 rounded-full blur-3xl group-hover:bg-blue-600/30 transition-all"></div>
-          <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] block mb-2">Margen Neto</span>
+        <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
+          <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-600/20 rounded-full blur-3xl"></div>
+          <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] block mb-2">Balance Disponible</span>
           <div className="text-4xl font-black mb-6 tracking-tight">${totals.margen.toLocaleString()}</div>
           <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-6">
             <div className="bg-white/5 p-3 rounded-2xl backdrop-blur-sm">
@@ -274,26 +279,26 @@ const App = () => {
           </div>
         )}
 
-        <div className="flex p-1.5 bg-slate-100 rounded-2xl shadow-inner">
+        <div className="flex p-1.5 bg-slate-100 rounded-2xl">
           <button onClick={() => setViewMode('ingresos')} className={`flex-1 py-3 rounded-xl font-black text-[10px] tracking-widest transition-all ${viewMode === 'ingresos' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-400'}`}>INGRESOS</button>
           <button onClick={() => setViewMode('gastos')} className={`flex-1 py-3 rounded-xl font-black text-[10px] tracking-widest transition-all ${viewMode === 'gastos' ? 'bg-white text-rose-600 shadow-md' : 'text-slate-400'}`}>GASTOS</button>
         </div>
 
-        <div className="relative group">
-          <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600" />
-          <input type="text" placeholder="Buscar por entidad..." className="pl-11 pr-5 py-4 bg-white border border-slate-100 rounded-2xl text-xs font-bold w-full outline-none focus:border-blue-600/30 shadow-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+        <div className="relative">
+          <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input type="text" placeholder="Buscar..." className="pl-11 pr-5 py-4 bg-white border border-slate-100 rounded-2xl text-xs font-bold w-full outline-none focus:border-blue-600/30 shadow-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
         </div>
 
         <div className="space-y-3">
           {filteredData.filter(t => t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto')).map(t => (
-            <div key={t.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 flex justify-between items-center shadow-sm hover:border-l-blue-600 border-l-4 border-l-transparent transition-all">
+            <div key={t.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 flex justify-between items-center shadow-sm border-l-4 border-l-transparent hover:border-l-blue-600 transition-all">
               <div className="flex items-center gap-4">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center ${t.type === 'ingreso' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                   {t.type === 'ingreso' ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />}
                 </div>
                 <div>
-                  <div className="font-black text-slate-800 text-sm tracking-tight">{t.entity}</div>
-                  <div className="text-[9px] text-slate-400 font-bold uppercase">Fact: {t.invoiceNum} • {t.date}</div>
+                  <div className="font-black text-slate-800 text-sm">{t.entity}</div>
+                  <div className="text-[9px] text-slate-400 font-bold uppercase">FACT: {t.invoiceNum} • {t.date}</div>
                 </div>
               </div>
               <div className="text-right">
@@ -308,7 +313,7 @@ const App = () => {
         </div>
       </main>
 
-      <button onClick={() => { setEditingId(null); setIsModalOpen(true); }} className="fixed bottom-8 right-8 w-16 h-16 bg-blue-600 text-white rounded-2xl shadow-2xl flex items-center justify-center z-50 hover:scale-110 active:scale-95 transition-all">
+      <button onClick={() => { setEditingId(null); setIsModalOpen(true); }} className="fixed bottom-8 right-8 w-16 h-16 bg-blue-600 text-white rounded-2xl shadow-2xl flex items-center justify-center z-50 active:scale-95 transition-all">
         <Plus size={32} strokeWidth={3} />
       </button>
 
@@ -316,7 +321,7 @@ const App = () => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[60] flex items-end justify-center">
           <div className="bg-white w-full max-w-xl rounded-t-[3rem] p-10 pb-16 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
-              <h2 className="text-xl font-black text-slate-800 uppercase italic tracking-tighter">{editingId ? 'Editar' : 'Nuevo'} Registro</h2>
+              <h2 className="text-xl font-black text-slate-800 uppercase italic tracking-tighter">{editingId ? 'Editar' : 'Nuevo'} Movimiento</h2>
               <button onClick={() => setIsModalOpen(false)} className="p-3 bg-slate-100 rounded-2xl text-slate-400"><X size={24} /></button>
             </div>
             <form onSubmit={handleSave} className="space-y-5">
@@ -324,14 +329,14 @@ const App = () => {
                 <button type="button" onClick={() => setFormData({...formData, type: 'ingreso'})} className={`py-4 rounded-2xl font-black text-[10px] tracking-widest ${formData.type === 'ingreso' ? 'bg-white text-emerald-600 shadow-md' : 'text-slate-400'}`}>INGRESO</button>
                 <button type="button" onClick={() => setFormData({...formData, type: 'gasto'})} className={`py-4 rounded-2xl font-black text-[10px] tracking-widest ${formData.type === 'gasto' ? 'bg-white text-rose-600 shadow-md' : 'text-slate-400'}`}>GASTO</button>
               </div>
-              <input required type="text" placeholder="Entidad" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
+              <input required type="text" placeholder="Empresa / Proveedor" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
               <div className="grid grid-cols-2 gap-4">
-                <input required type="text" placeholder="Factura" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
-                <input required type="number" step="0.01" placeholder="Monto" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-black focus:bg-white outline-none" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
+                <input required type="text" placeholder="No. Factura" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
+                <input required type="number" step="0.01" placeholder="Importe" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-black focus:bg-white outline-none" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
               </div>
               <input required type="date" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
-              <button type="submit" className={`w-full py-6 rounded-3xl font-black text-white uppercase tracking-widest shadow-xl active:scale-95 transition-all ${formData.type === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
-                {editingId ? 'Actualizar Registro' : 'Confirmar Registro'}
+              <button type="submit" className={`w-full py-6 rounded-3xl font-black text-white uppercase tracking-widest shadow-xl active:scale-95 ${formData.type === 'ingreso' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+                {editingId ? 'Actualizar' : 'Guardar Datos'}
               </button>
             </form>
           </div>
