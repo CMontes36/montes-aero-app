@@ -12,11 +12,12 @@ import {
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, collection, doc, onSnapshot, addDoc, 
-  updateDoc, deleteDoc 
+  updateDoc, deleteDoc, setDoc 
 } from 'firebase/firestore';
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged,
   signInAnonymously,
@@ -38,15 +39,17 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('ingresos'); 
+  const [period, setPeriod] = useState('Este Mes');
   const [transactions, setTransactions] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [showChart, setShowChart] = useState(false);
   
-  // Auth states (Simplificado: Solo Login)
+  // Auth states
   const [authEmail, setAuthEmail] = useState('');
   const [authPass, setAuthPass] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
   const [authError, setAuthError] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
 
@@ -77,30 +80,41 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // Carga de datos
+  // Carga de datos protegida por UID
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setTransactions([]);
+      return;
+    }
 
     const transCol = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
+    
     const unsubTrans = onSnapshot(transCol, 
       (snap) => {
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setTransactions(data);
       },
-      (error) => console.error("Error en Firestore:", error)
+      (error) => {
+        console.error("Error en Firestore:", error);
+      }
     );
 
     return () => unsubTrans();
   }, [user]);
 
-  const handleLogin = async (e) => {
+  const handleAuth = async (e) => {
     e.preventDefault();
     setAuthError('');
     setIsAuthLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, authEmail, authPass);
+      if (isRegistering) {
+        await createUserWithEmailAndPassword(auth, authEmail, authPass);
+      } else {
+        await signInWithEmailAndPassword(auth, authEmail, authPass);
+      }
     } catch (err) {
-      setAuthError('Credenciales incorrectas o usuario no autorizado.');
+      console.error(err);
+      setAuthError('Error: Verifica tus datos o que el usuario no exista ya.');
     } finally {
       setIsAuthLoading(false);
     }
@@ -109,15 +123,17 @@ const App = () => {
   const handleLogout = () => signOut(auth);
 
   const filteredData = useMemo(() => {
-    return (transactions || []).filter(t => 
-      (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [transactions, searchTerm]);
+    const now = new Date();
+    return (transactions || []).filter(t => {
+      const tDate = new Date(t.date);
+      if (period === 'Este Mes') return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
+      return true;
+    }).filter(t => (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [transactions, period, searchTerm]);
 
   const totals = useMemo(() => {
-    const filteredByMode = filteredData;
-    const ingresos = filteredByMode.filter(t => t.type === 'ingreso').reduce((a, b) => a + (Number(b.amount) || 0), 0);
-    const gastos = filteredByMode.filter(t => t.type === 'gasto').reduce((a, b) => a + (Number(b.amount) || 0), 0);
+    const ingresos = filteredData.filter(t => t.type === 'ingreso').reduce((a, b) => a + (Number(b.amount) || 0), 0);
+    const gastos = filteredData.filter(t => t.type === 'gasto').reduce((a, b) => a + (Number(b.amount) || 0), 0);
     return { ingresos, gastos, margen: ingresos - gastos };
   }, [filteredData]);
 
@@ -125,6 +141,19 @@ const App = () => {
     { name: 'Ingresos', valor: totals.ingresos, color: '#10b981' },
     { name: 'Gastos', valor: totals.gastos, color: '#f43f5e' }
   ], [totals]);
+
+  const exportToCSV = () => {
+    if (filteredData.length === 0) return;
+    const headers = ["Fecha", "Entidad", "Factura", "Monto", "Tipo", "Categoria"];
+    const rows = filteredData.map(t => [t.date, `"${t.entity}"`, `"${t.invoiceNum}"`, t.amount, t.type.toUpperCase(), t.category]);
+    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Montes_Aero_Reporte_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -149,7 +178,7 @@ const App = () => {
   if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white font-sans">
       <Loader2 className="animate-spin text-blue-600 mb-4" size={40} />
-      <h1 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Verificando Credenciales...</h1>
+      <h1 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Iniciando sistema...</h1>
     </div>
   );
 
@@ -163,28 +192,31 @@ const App = () => {
           <h1 className="text-2xl font-black italic uppercase tracking-tighter text-slate-800">
             MONTES <span className="text-blue-600">AERO</span>
           </h1>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">Panel Administrativo</p>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">
+            {isRegistering ? 'Crear nueva cuenta' : 'Acceso de Seguridad'}
+          </p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleAuth} className="space-y-4">
           <div className="relative">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input required type="email" placeholder="Correo electrónico" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+            <input required type="email" placeholder="Email" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
           </div>
           <div className="relative">
             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input required type="password" placeholder="Contraseña" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all" value={authPass} onChange={e => setAuthPass(e.target.value)} />
+            <input required type="password" placeholder="Password" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all" value={authPass} onChange={e => setAuthPass(e.target.value)} />
           </div>
           
           {authError && <p className="text-rose-500 text-[10px] font-black text-center uppercase bg-rose-50 p-2 rounded-lg">{authError}</p>}
 
           <button disabled={isAuthLoading} type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-xl mt-4 active:scale-95 disabled:opacity-50">
-            {isAuthLoading ? 'Autenticando...' : 'Iniciar Sesión'}
+            {isAuthLoading ? 'Procesando...' : (isRegistering ? 'Crear Cuenta' : 'Ingresar')}
           </button>
         </form>
-        <p className="text-center mt-8 text-[9px] font-bold text-slate-300 uppercase tracking-widest">
-          Acceso restringido para personal autorizado
-        </p>
+
+        <button onClick={() => setIsRegistering(!isRegistering)} className="w-full text-center mt-6 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600">
+          {isRegistering ? '¿Ya tienes cuenta? Login' : '¿No tienes cuenta? Registro'}
+        </button>
       </div>
     </div>
   );
@@ -198,6 +230,7 @@ const App = () => {
             <h1 className="text-lg font-black italic uppercase tracking-tighter">MONTES <span className="text-blue-600">AERO</span></h1>
           </div>
           <div className="flex gap-2">
+            <button onClick={exportToCSV} className="p-2.5 rounded-2xl border border-slate-100 bg-white text-slate-600 hover:bg-slate-50 shadow-sm"><Download size={18} /></button>
             <button onClick={() => setShowChart(!showChart)} className={`p-2.5 rounded-2xl border transition-all ${showChart ? 'bg-blue-600 text-white' : 'bg-white text-slate-400'}`}><BarChart3 size={18} /></button>
             <button onClick={handleLogout} className="p-2.5 rounded-2xl border border-slate-100 bg-white text-rose-600 hover:bg-rose-50 shadow-sm"><LogOut size={18} /></button>
           </div>
@@ -260,7 +293,7 @@ const App = () => {
                 </div>
                 <div>
                   <div className="font-black text-slate-800 text-sm tracking-tight">{t.entity}</div>
-                  <div className="text-[9px] text-slate-400 font-bold uppercase">Fac: {t.invoiceNum} • {t.date}</div>
+                  <div className="text-[9px] text-slate-400 font-bold uppercase">Fact: {t.invoiceNum} • {t.date}</div>
                 </div>
               </div>
               <div className="text-right">
@@ -272,11 +305,6 @@ const App = () => {
               </div>
             </div>
           ))}
-          {filteredData.filter(t => t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto')).length === 0 && (
-            <div className="text-center py-10">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest italic">No hay registros</p>
-            </div>
-          )}
         </div>
       </main>
 
@@ -286,35 +314,23 @@ const App = () => {
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[60] flex items-end justify-center">
-          <div className="bg-white w-full max-w-xl rounded-t-[3rem] p-10 pb-16 max-h-[90vh] overflow-y-auto shadow-2xl">
+          <div className="bg-white w-full max-w-xl rounded-t-[3rem] p-10 pb-16 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
-              <h2 className="text-xl font-black text-slate-800 uppercase italic tracking-tighter">{editingId ? 'Editar' : 'Nuevo'} Movimiento</h2>
-              <button onClick={() => setIsModalOpen(false)} className="p-3 bg-slate-100 rounded-2xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"><X size={24} /></button>
+              <h2 className="text-xl font-black text-slate-800 uppercase italic tracking-tighter">{editingId ? 'Editar' : 'Nuevo'} Registro</h2>
+              <button onClick={() => setIsModalOpen(false)} className="p-3 bg-slate-100 rounded-2xl text-slate-400"><X size={24} /></button>
             </div>
             <form onSubmit={handleSave} className="space-y-5">
               <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-100 rounded-3xl">
-                <button type="button" onClick={() => setFormData({...formData, type: 'ingreso'})} className={`py-4 rounded-2xl font-black text-[10px] tracking-widest transition-all ${formData.type === 'ingreso' ? 'bg-white text-emerald-600 shadow-md' : 'text-slate-400'}`}>INGRESO</button>
-                <button type="button" onClick={() => setFormData({...formData, type: 'gasto'})} className={`py-4 rounded-2xl font-black text-[10px] tracking-widest transition-all ${formData.type === 'gasto' ? 'bg-white text-rose-600 shadow-md' : 'text-slate-400'}`}>GASTO</button>
+                <button type="button" onClick={() => setFormData({...formData, type: 'ingreso'})} className={`py-4 rounded-2xl font-black text-[10px] tracking-widest ${formData.type === 'ingreso' ? 'bg-white text-emerald-600 shadow-md' : 'text-slate-400'}`}>INGRESO</button>
+                <button type="button" onClick={() => setFormData({...formData, type: 'gasto'})} className={`py-4 rounded-2xl font-black text-[10px] tracking-widest ${formData.type === 'gasto' ? 'bg-white text-rose-600 shadow-md' : 'text-slate-400'}`}>GASTO</button>
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Entidad / Cliente / Proveedor</label>
-                <input required type="text" placeholder="Ej: Aeropuerto Internacional" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
-              </div>
+              <input required type="text" placeholder="Entidad" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">N° Factura</label>
-                  <input required type="text" placeholder="F-001" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Monto ($)</label>
-                  <input required type="number" step="0.01" placeholder="0.00" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-black focus:bg-white focus:border-blue-500 outline-none transition-all" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
-                </div>
+                <input required type="text" placeholder="Factura" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
+                <input required type="number" step="0.01" placeholder="Monto" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-black focus:bg-white outline-none" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Fecha</label>
-                <input required type="date" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
-              </div>
-              <button type="submit" className={`w-full py-6 rounded-3xl font-black text-white uppercase tracking-widest shadow-xl active:scale-95 transition-all mt-4 ${formData.type === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
+              <input required type="date" className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold focus:bg-white outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+              <button type="submit" className={`w-full py-6 rounded-3xl font-black text-white uppercase tracking-widest shadow-xl active:scale-95 transition-all ${formData.type === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
                 {editingId ? 'Actualizar Registro' : 'Confirmar Registro'}
               </button>
             </form>
