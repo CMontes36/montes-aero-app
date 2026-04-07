@@ -75,12 +75,13 @@ const App = () => {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
         } else if (!auth.currentUser) {
-          // Si no hay usuario, intentar login anónimo para permitir pruebas
+          // Intentar login anónimo para que la app funcione inmediatamente
           await signInAnonymously(auth);
         }
       } catch (e) {
         console.error("Error auth inicial:", e);
       } finally {
+        // Forzamos el fin del loading incluso si hay error para que la UI no se congele
         setLoading(false);
       }
     };
@@ -93,7 +94,7 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // Carga de datos
+  // Carga de datos de Firestore
   useEffect(() => {
     if (!user) {
       setTransactions([]);
@@ -126,7 +127,7 @@ const App = () => {
         await signInWithEmailAndPassword(auth, authEmail, authPass);
       }
     } catch (err) {
-      setAuthError('Error: Revisa tus credenciales o conexión.');
+      setAuthError('Error de acceso. Revisa tus datos.');
     } finally {
       setIsAuthLoading(false);
     }
@@ -153,15 +154,9 @@ const App = () => {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!user) {
-      setAuthError("Debes estar identificado para guardar.");
-      return;
-    }
+    if (!user) return;
     
-    // Validación básica
-    if (!formData.entity || !formData.amount) {
-      return;
-    }
+    if (!formData.entity || !formData.amount) return;
     
     const payload = { 
       ...formData, 
@@ -179,7 +174,6 @@ const App = () => {
           createdAt: new Date().toISOString() 
         });
       }
-      // Limpiar y cerrar
       setIsModalOpen(false);
       setEditingId(null);
       setFormData({ 
@@ -191,83 +185,80 @@ const App = () => {
     }
   };
 
+  // Pantalla de Carga
   if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white">
-      <Loader2 className="animate-spin text-blue-600 mb-2" size={32} />
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Iniciando Montes Aero...</p>
+      <Loader2 className="animate-spin text-blue-600 mb-4" size={40} />
+      <p className="text-[12px] font-black text-slate-400 uppercase tracking-[0.3em]">Cargando Sistema...</p>
     </div>
   );
 
+  // Pantalla de Login (si no hay usuario ni sesión anónima)
   if (!user) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 shadow-2xl border border-slate-100">
-        <div className="text-center mb-10">
-          <div className="bg-slate-900 w-16 h-16 rounded-2xl text-white flex items-center justify-center mx-auto mb-4 shadow-xl">
-            <Lock size={32} />
-          </div>
-          <h1 className="text-2xl font-black italic uppercase tracking-tighter text-slate-800">
-            MONTES <span className="text-blue-600">AERO</span>
-          </h1>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">Acceso Seguro</p>
+      <div className="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl border border-slate-100 text-center">
+        <div className="bg-slate-900 w-20 h-20 rounded-3xl text-white flex items-center justify-center mx-auto mb-6 shadow-2xl rotate-3">
+          <Lock size={32} />
         </div>
+        <h1 className="text-3xl font-black italic uppercase tracking-tighter text-slate-800 mb-2">
+          MONTES <span className="text-blue-600">AERO</span>
+        </h1>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-10">Panel de Control</p>
 
         <form onSubmit={handleAuth} className="space-y-4">
-          <div className="relative">
-            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-            <input required type="email" placeholder="Email" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
-          </div>
-          <div className="relative">
-            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-            <input required type="password" placeholder="Contraseña" className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500" value={authPass} onChange={e => setAuthPass(e.target.value)} />
-          </div>
-          {authError && <p className="text-rose-500 text-[10px] font-bold text-center uppercase bg-rose-50 p-2 rounded-lg">{authError}</p>}
-          <button disabled={isAuthLoading} type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all active:scale-95">
-            {isAuthLoading ? 'Procesando...' : (isRegistering ? 'Crear Cuenta' : 'Ingresar')}
+          <input required type="email" placeholder="Email" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+          <input required type="password" placeholder="Contraseña" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all" value={authPass} onChange={e => setAuthPass(e.target.value)} />
+          {authError && <p className="text-rose-500 text-[10px] font-black uppercase bg-rose-50 p-3 rounded-xl">{authError}</p>}
+          <button disabled={isAuthLoading} type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-lg">
+            {isAuthLoading ? 'Cargando...' : (isRegistering ? 'Crear Cuenta' : 'Entrar')}
           </button>
         </form>
-        <button onClick={() => setIsRegistering(!isRegistering)} className="w-full text-center mt-6 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600">
-          {isRegistering ? '¿Ya tienes cuenta? Login' : '¿No tienes cuenta? Registro'}
+        <button onClick={() => setIsRegistering(!isRegistering)} className="mt-8 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600 block w-full text-center">
+          {isRegistering ? '¿Ya eres miembro? Inicia sesión' : '¿Nuevo aquí? Regístrate'}
         </button>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] pb-24 font-sans text-slate-900">
-      <header className="bg-white border-b p-4 sticky top-0 z-40 shadow-sm">
+    <div className="min-h-screen bg-[#F8FAFC] pb-24 font-sans text-slate-900 overflow-x-hidden">
+      {/* Header */}
+      <header className="bg-white border-b p-4 sticky top-0 z-50 shadow-sm">
         <div className="max-w-xl mx-auto flex justify-between items-center">
-          <h1 className="text-lg font-black italic uppercase tracking-tighter">MONTES <span className="text-blue-600">AERO</span></h1>
+          <h1 className="text-xl font-black italic uppercase tracking-tighter">MONTES <span className="text-blue-600">AERO</span></h1>
           <div className="flex gap-2">
-            <button onClick={() => setShowChart(!showChart)} className={`p-2.5 rounded-2xl border transition-all ${showChart ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-400 border-slate-100'}`}><BarChart3 size={18} /></button>
-            <button onClick={handleLogout} className="p-2.5 rounded-2xl border border-slate-100 bg-white text-rose-600 hover:bg-rose-50 shadow-sm"><LogOut size={18} /></button>
+            <button onClick={() => setShowChart(!showChart)} className={`p-3 rounded-2xl border transition-all ${showChart ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-white text-slate-400 border-slate-100'}`}><BarChart3 size={20} /></button>
+            <button onClick={handleLogout} className="p-3 rounded-2xl border border-slate-100 bg-white text-rose-600 hover:bg-rose-50 transition-all"><LogOut size={20} /></button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-xl mx-auto p-4 space-y-5">
+      <main className="max-w-xl mx-auto p-4 space-y-6">
+        {/* Card de Balance */}
         <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden group">
-          <div className="absolute -right-10 -top-10 w-32 h-32 bg-blue-600/20 rounded-full blur-3xl"></div>
-          <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] block mb-2">Balance Neto</span>
-          <div className="text-4xl font-black mb-6 tracking-tight">${totals.margen.toLocaleString()}</div>
-          <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-6">
-            <div className="bg-white/5 p-3 rounded-2xl backdrop-blur-sm">
-              <div className="flex items-center gap-2 text-emerald-400 text-[9px] font-black uppercase mb-1"><ArrowUpRight size={14}/> Ingresos</div>
-              <span className="font-black text-lg">${totals.ingresos.toLocaleString()}</span>
+          <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-600/30 rounded-full blur-[80px]"></div>
+          <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.25em] block mb-2">Balance Neto Disponible</span>
+          <div className="text-5xl font-black mb-8 tracking-tighter">${totals.margen.toLocaleString()}</div>
+          <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-8">
+            <div className="bg-white/5 p-4 rounded-3xl backdrop-blur-md border border-white/5">
+              <div className="flex items-center gap-2 text-emerald-400 text-[10px] font-black uppercase mb-1"><ArrowUpRight size={14}/> Ingresos</div>
+              <span className="font-black text-xl">${totals.ingresos.toLocaleString()}</span>
             </div>
-            <div className="bg-white/5 p-3 rounded-2xl backdrop-blur-sm">
-              <div className="flex items-center gap-2 text-rose-400 text-[9px] font-black uppercase mb-1"><ArrowDownRight size={14}/> Gastos</div>
-              <span className="font-black text-lg">${totals.gastos.toLocaleString()}</span>
+            <div className="bg-white/5 p-4 rounded-3xl backdrop-blur-md border border-white/5">
+              <div className="flex items-center gap-2 text-rose-400 text-[10px] font-black uppercase mb-1"><ArrowDownRight size={14}/> Gastos</div>
+              <span className="font-black text-xl">${totals.gastos.toLocaleString()}</span>
             </div>
           </div>
         </div>
 
+        {/* Gráfico */}
         {showChart && (
-          <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 h-56 shadow-sm">
+          <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 h-64 shadow-xl transition-all animate-in fade-in zoom-in duration-300">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
                 <XAxis dataKey="name" hide />
-                <Tooltip cursor={{fill: 'transparent'}} />
-                <Bar dataKey="valor" radius={[10, 10, 10, 10]} barSize={50}>
+                <Tooltip cursor={{fill: 'transparent'}} contentStyle={{borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                <Bar dataKey="valor" radius={[15, 15, 15, 15]} barSize={60}>
                   {chartData.map((e, i) => <Cell key={i} fill={e.color} />)}
                 </Bar>
               </BarChart>
@@ -275,36 +266,38 @@ const App = () => {
           </div>
         )}
 
-        <div className="flex p-1 bg-slate-100 rounded-2xl shadow-inner">
-          <button onClick={() => setViewMode('ingresos')} className={`flex-1 py-3 rounded-xl font-black text-[10px] tracking-widest transition-all ${viewMode === 'ingresos' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-400'}`}>INGRESOS</button>
-          <button onClick={() => setViewMode('gastos')} className={`flex-1 py-3 rounded-xl font-black text-[10px] tracking-widest transition-all ${viewMode === 'gastos' ? 'bg-white text-rose-600 shadow-md' : 'text-slate-400'}`}>GASTOS</button>
+        {/* Selectores y Búsqueda */}
+        <div className="flex p-1.5 bg-slate-100 rounded-[1.5rem] shadow-inner mb-2">
+          <button onClick={() => setViewMode('ingresos')} className={`flex-1 py-4 rounded-[1.2rem] font-black text-[11px] tracking-widest transition-all ${viewMode === 'ingresos' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>INGRESOS</button>
+          <button onClick={() => setViewMode('gastos')} className={`flex-1 py-4 rounded-[1.2rem] font-black text-[11px] tracking-widest transition-all ${viewMode === 'gastos' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}>GASTOS</button>
         </div>
 
-        <div className="relative">
-          <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input type="text" placeholder="Buscar entidad..." className="pl-11 pr-5 py-4 bg-white border border-slate-100 rounded-2xl text-xs font-bold w-full outline-none focus:border-blue-200 shadow-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+        <div className="relative group">
+          <Search size={16} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
+          <input type="text" placeholder="Buscar por entidad o cliente..." className="pl-12 pr-6 py-5 bg-white border border-slate-100 rounded-[2rem] text-sm font-bold w-full outline-none focus:border-blue-200 shadow-sm transition-all focus:shadow-md" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
         </div>
 
-        <div className="space-y-3">
+        {/* Lista de Transacciones */}
+        <div className="space-y-4">
           {filteredData.filter(t => t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto')).length === 0 && (
-            <div className="text-center py-10 opacity-20 font-black uppercase text-[10px] tracking-widest">Sin registros</div>
+            <div className="text-center py-20 opacity-20 font-black uppercase text-[11px] tracking-[0.3em]">No hay registros para mostrar</div>
           )}
           {filteredData.filter(t => t.type === (viewMode === 'ingresos' ? 'ingreso' : 'gasto')).map(t => (
-            <div key={t.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 flex justify-between items-center shadow-sm hover:translate-x-1 transition-transform">
-              <div className="flex items-center gap-4">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${t.type === 'ingreso' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                  {t.type === 'ingreso' ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />}
+            <div key={t.id} className="bg-white p-6 rounded-[2.2rem] border border-slate-100 flex justify-between items-center shadow-sm hover:shadow-md hover:translate-x-1 transition-all">
+              <div className="flex items-center gap-5">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ${t.type === 'ingreso' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {t.type === 'ingreso' ? <ArrowUpRight size={22} /> : <ArrowDownRight size={22} />}
                 </div>
                 <div>
-                  <div className="font-black text-slate-800 text-sm tracking-tight">{t.entity}</div>
-                  <div className="text-[9px] text-slate-400 font-bold uppercase">Fact: {t.invoiceNum || 'S/N'} • {t.date}</div>
+                  <div className="font-black text-slate-800 text-base tracking-tight">{t.entity}</div>
+                  <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Fact: {t.invoiceNum || 'N/A'} • {t.date}</div>
                 </div>
               </div>
               <div className="text-right">
-                <div className={`font-black text-sm ${t.type === 'ingreso' ? 'text-emerald-600' : 'text-rose-600'}`}>${Number(t.amount).toLocaleString()}</div>
-                <div className="flex gap-3 mt-2 justify-end">
-                  <button onClick={() => { setEditingId(t.id); setFormData(t); setIsModalOpen(true); }} className="text-slate-300 hover:text-blue-600 transition-colors"><Pencil size={14} /></button>
-                  <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', t.id))} className="text-slate-300 hover:text-rose-600 transition-colors"><Trash2 size={14} /></button>
+                <div className={`font-black text-lg ${t.type === 'ingreso' ? 'text-emerald-600' : 'text-rose-600'}`}>${Number(t.amount).toLocaleString()}</div>
+                <div className="flex gap-4 mt-3 justify-end">
+                  <button onClick={() => { setEditingId(t.id); setFormData(t); setIsModalOpen(true); }} className="text-slate-200 hover:text-blue-600 transition-colors"><Pencil size={18} /></button>
+                  <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', t.id))} className="text-slate-200 hover:text-rose-600 transition-colors"><Trash2 size={18} /></button>
                 </div>
               </div>
             </div>
@@ -312,46 +305,60 @@ const App = () => {
         </div>
       </main>
 
-      <button onClick={() => { setEditingId(null); setIsModalOpen(true); }} className="fixed bottom-8 right-8 w-16 h-16 bg-blue-600 text-white rounded-2xl shadow-2xl flex items-center justify-center z-50 hover:scale-110 active:scale-95 transition-all">
-        <Plus size={32} strokeWidth={3} />
+      {/* Botón Flotante para el Formulario */}
+      <button 
+        onClick={() => { setEditingId(null); setIsModalOpen(true); }} 
+        className="fixed bottom-10 right-10 w-20 h-20 bg-blue-600 text-white rounded-3xl shadow-2xl flex items-center justify-center z-[60] hover:scale-110 active:scale-90 transition-all shadow-blue-300 ring-8 ring-white/50"
+      >
+        <Plus size={36} strokeWidth={3} />
       </button>
 
+      {/* MODAL DEL FORMULARIO - Asegurado con z-index 100 */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[60] flex items-end justify-center">
-          <div className="bg-white w-full max-w-xl rounded-t-[3rem] p-10 pb-16 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-xl font-black text-slate-800 uppercase italic tracking-tighter">{editingId ? 'Editar' : 'Nuevo'} Registro</h2>
-              <button onClick={() => setIsModalOpen(false)} className="p-3 bg-slate-100 rounded-2xl text-slate-400"><X size={24} /></button>
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white w-full max-w-xl rounded-t-[3.5rem] sm:rounded-[3.5rem] p-10 pb-12 shadow-2xl animate-in slide-in-from-bottom duration-300">
+            <div className="flex justify-between items-center mb-10">
+              <div>
+                <h2 className="text-2xl font-black text-slate-800 uppercase italic tracking-tighter">
+                  {editingId ? 'Editar' : 'Nuevo'} Registro
+                </h2>
+                <div className="h-1 w-12 bg-blue-600 mt-1 rounded-full"></div>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} className="p-4 bg-slate-100 rounded-3xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all">
+                <X size={28} />
+              </button>
             </div>
-            <form onSubmit={handleSave} className="space-y-4">
-              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
-                <button type="button" onClick={() => setFormData({...formData, type: 'ingreso'})} className={`py-4 rounded-xl font-black text-[10px] tracking-widest transition-all ${formData.type === 'ingreso' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}>INGRESO</button>
-                <button type="button" onClick={() => setFormData({...formData, type: 'gasto'})} className={`py-4 rounded-xl font-black text-[10px] tracking-widest transition-all ${formData.type === 'gasto' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}>GASTO</button>
+            
+            <form onSubmit={handleSave} className="space-y-6">
+              {/* Selector de Tipo */}
+              <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-100 rounded-[1.8rem]">
+                <button type="button" onClick={() => setFormData({...formData, type: 'ingreso'})} className={`py-5 rounded-[1.4rem] font-black text-[12px] tracking-[0.2em] transition-all ${formData.type === 'ingreso' ? 'bg-white text-emerald-600 shadow-md shadow-emerald-100' : 'text-slate-400'}`}>INGRESO</button>
+                <button type="button" onClick={() => setFormData({...formData, type: 'gasto'})} className={`py-5 rounded-[1.4rem] font-black text-[12px] tracking-[0.2em] transition-all ${formData.type === 'gasto' ? 'bg-white text-rose-600 shadow-md shadow-rose-100' : 'text-slate-400'}`}>GASTO</button>
               </div>
               
-              <div className="space-y-1">
-                <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Entidad / Cliente</label>
-                <input required type="text" placeholder="Ej: Aeropuerto Intl" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold focus:bg-white focus:border-blue-300 outline-none transition-all" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Nombre de Entidad o Cliente</label>
+                <input required type="text" placeholder="Ej: Servicios de Pista" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-bold focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-50 outline-none transition-all" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})} />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Nº Factura</label>
-                  <input required type="text" placeholder="001-X" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold focus:bg-white outline-none" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Nº Factura</label>
+                  <input required type="text" placeholder="000-000" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-bold focus:bg-white outline-none transition-all" value={formData.invoiceNum} onChange={e => setFormData({...formData, invoiceNum: e.target.value})} />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Monto ($)</label>
-                  <input required type="number" step="0.01" placeholder="0.00" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-black focus:bg-white outline-none" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Monto ($)</label>
+                  <input required type="number" step="0.01" placeholder="0.00" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-black focus:bg-white outline-none transition-all" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Fecha</label>
-                <input required type="date" className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold focus:bg-white outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-4">Fecha del Registro</label>
+                <input required type="date" className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[1.8rem] text-base font-bold focus:bg-white outline-none transition-all" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
               </div>
 
-              <button type="submit" className={`w-full py-6 rounded-2xl font-black text-white uppercase tracking-widest shadow-xl active:scale-95 transition-all mt-4 ${formData.type === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
-                {editingId ? 'Actualizar' : 'Guardar Registro'}
+              <button type="submit" className={`w-full py-6 rounded-[2rem] font-black text-[14px] text-white uppercase tracking-[0.3em] shadow-2xl active:scale-95 transition-all mt-6 shadow-blue-200 ${formData.type === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
+                {editingId ? 'Confirmar Edición' : 'Registrar Operación'}
               </button>
             </form>
           </div>
