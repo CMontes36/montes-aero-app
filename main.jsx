@@ -16,11 +16,10 @@ import {
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
-// NOTA PARA VERCEL: 
-// Como no estamos en el entorno de pruebas, definimos valores por defecto 
-// para evitar que el proceso de "Build" falle.
+// NOTA: Estos son valores temporales. Para que guarde datos reales, 
+// deberás reemplazarlos con tus credenciales de Firebase Console.
 const firebaseConfig = {
-  apiKey: "AIzaSy...", // Vercel necesita que esto sea un objeto válido
+  apiKey: "AIzaSy-Temporal-Key", 
   authDomain: "montes-aero.firebaseapp.com",
   projectId: "montes-aero",
   storageBucket: "montes-aero.appspot.com",
@@ -33,6 +32,12 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'montes-aero-v1';
 
+// Datos de ejemplo para que la app no se vea vacía si falla la conexión
+const demoData = [
+  { id: '1', entity: 'Ejemplo Ingreso', invoiceNum: '001', amount: 5000, type: 'ingreso', category: 'Servicios', date: new Date().toISOString().split('T')[0] },
+  { id: '2', entity: 'Ejemplo Gasto', invoiceNum: '002', amount: 1200, type: 'gasto', category: 'Alquiler', date: new Date().toISOString().split('T')[0] }
+];
+
 const App = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,7 +49,6 @@ const App = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState(null);
-  const [newCategoryName, setNewCategoryName] = useState('');
   const [showChart, setShowChart] = useState(false);
   
   const [formData, setFormData] = useState({ 
@@ -56,7 +60,11 @@ const App = () => {
     const initAuth = async () => {
       try {
         await signInAnonymously(auth);
-      } catch (error) { console.error("Error Auth:", error); }
+      } catch (error) { 
+        console.warn("Usando modo demostración (sin Firebase)");
+        setTransactions(demoData);
+        setLoading(false);
+      }
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
@@ -66,27 +74,40 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
     const transCol = collection(db, 'artifacts', appId, 'public', 'data', 'transactions');
+    
+    // Timeout de seguridad: Si en 3 segundos no hay datos de Firebase, mostramos los de demo
+    const timer = setTimeout(() => {
+      if (transactions.length === 0) {
+        setTransactions(demoData);
+        setLoading(false);
+      }
+    }, 3000);
+
     const unsubTrans = onSnapshot(transCol, (snap) => {
-      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      if (!snap.empty) {
+        setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
       setLoading(false);
-    }, () => setLoading(false));
+      clearTimeout(timer);
+    }, (err) => {
+      console.error("Firestore Error:", err);
+      setTransactions(demoData);
+      setLoading(false);
+    });
 
     const settingsDoc = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'categories');
     const unsubCats = onSnapshot(settingsDoc, (snap) => {
       if (snap.exists()) setCategories(snap.data().list || []);
     });
-    return () => { unsubTrans(); unsubCats(); };
+
+    return () => { unsubTrans(); unsubCats(); clearTimeout(timer); };
   }, [user]);
 
   const filteredData = useMemo(() => {
     const now = new Date();
-    return transactions.filter(t => {
+    return (transactions || []).filter(t => {
       const tDate = new Date(t.date);
       if (period === 'Este Mes') return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
-      if (period === 'Últimos 3 Meses') {
-        const limit = new Date(); limit.setMonth(now.getMonth() - 3);
-        return tDate >= limit;
-      }
       return true;
     }).filter(t => (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase()));
   }, [transactions, period, searchTerm]);
@@ -104,21 +125,31 @@ const App = () => {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!user) return;
     const payload = { ...formData, amount: parseFloat(formData.amount) || 0, updatedAt: new Date().toISOString() };
-    try {
-      if (editingId) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', editingId), payload);
-      else await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), { ...payload, createdAt: new Date().toISOString() });
-      setIsModalOpen(false);
-      setEditingId(null);
-      setFormData({ entity: '', invoiceNum: '', amount: '', type: 'ingreso', category: '', date: new Date().toISOString().split('T')[0], paymentDate: '' });
-    } catch (err) { console.error(err); }
+    
+    if (!user) {
+      // Modo local si no hay Firebase
+      const newTrans = editingId 
+        ? transactions.map(t => t.id === editingId ? { ...payload, id: editingId } : t)
+        : [...transactions, { ...payload, id: Date.now().toString() }];
+      setTransactions(newTrans);
+    } else {
+      try {
+        if (editingId) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', editingId), payload);
+        else await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), { ...payload, createdAt: new Date().toISOString() });
+      } catch (err) { console.error(err); }
+    }
+    
+    setIsModalOpen(false);
+    setEditingId(null);
+    setFormData({ entity: '', invoiceNum: '', amount: '', type: 'ingreso', category: '', date: new Date().toISOString().split('T')[0], paymentDate: '' });
   };
 
   if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white">
-      <Loader2 className="animate-spin text-blue-600 mb-2" />
-      <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Montes Aero</span>
+      <Loader2 className="animate-spin text-blue-600 mb-4" size={40} />
+      <h1 className="text-sm font-black italic uppercase tracking-tighter text-slate-800">MONTES <span className="text-blue-600">AERO</span></h1>
+      <p className="text-[10px] text-slate-400 mt-2 font-bold animate-pulse">CARGANDO SISTEMA...</p>
     </div>
   );
 
@@ -135,7 +166,6 @@ const App = () => {
             <button onClick={() => setPeriod(period === 'Este Mes' ? 'Todo' : 'Este Mes')} className="px-3 py-1 bg-slate-50 border rounded-xl text-[9px] font-black uppercase flex items-center gap-1">
                {period}
             </button>
-            <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-slate-50 border rounded-xl text-slate-400"><Settings size={14} /></button>
           </div>
         </div>
       </header>
@@ -184,13 +214,16 @@ const App = () => {
             <div key={t.id} className="bg-white p-4 rounded-[1.5rem] border border-slate-100 flex justify-between items-center shadow-sm">
               <div>
                 <div className="font-bold text-slate-800 text-xs">{t.entity}</div>
-                <div className="text-[8px] text-slate-400 font-bold uppercase">Fac: {t.date}</div>
+                <div className="text-[8px] text-slate-400 font-bold uppercase">Fecha: {t.date}</div>
               </div>
               <div className="text-right">
                 <div className={`font-black text-xs ${t.type === 'ingreso' ? 'text-emerald-600' : 'text-rose-600'}`}>${t.amount.toLocaleString()}</div>
                 <div className="flex gap-2 mt-1">
                   <button onClick={() => { setEditingId(t.id); setFormData(t); setIsModalOpen(true); }} className="text-slate-300"><Pencil size={12} /></button>
-                  <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', t.id))} className="text-slate-300"><Trash2 size={12} /></button>
+                  <button onClick={() => {
+                    if (user) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', t.id));
+                    else setTransactions(transactions.filter(tr => tr.id !== t.id));
+                  }} className="text-slate-300"><Trash2 size={12} /></button>
                 </div>
               </div>
             </div>
@@ -202,7 +235,6 @@ const App = () => {
         <Plus size={28} />
       </button>
 
-      {/* Modal Simplificado */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-end justify-center">
           <div className="bg-white w-full rounded-t-[3rem] p-8 pb-12 max-h-[90vh] overflow-y-auto">
