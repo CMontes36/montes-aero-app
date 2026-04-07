@@ -20,9 +20,21 @@ import {
   signInAnonymously
 } from 'firebase/auth';
 
-// NOTA: En GitHub/Vercel, Tailwind se carga desde el index.html que configuramos.
+/**
+ * CONFIGURACIÓN DE FIREBASE PARA GITHUB
+ * Si __firebase_config no existe (fuera de este chat), usa tus credenciales reales.
+ */
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : {
+      apiKey: "TU_API_KEY",
+      authDomain: "TU_PROYECTO.firebaseapp.com",
+      projectId: "TU_PROYECTO",
+      storageBucket: "TU_PROYECTO.appspot.com",
+      messagingSenderId: "TU_ID",
+      appId: "TU_APP_ID"
+    };
 
-const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -51,9 +63,11 @@ const App = () => {
   useEffect(() => {
     const initAuth = async () => {
       try {
+        // En GitHub no tendremos __initial_auth_token, así que usamos anónimo siempre
         await signInAnonymously(auth);
       } catch (error) { 
         console.error("Error de Auth:", error); 
+        setLoading(false);
       }
     };
     initAuth();
@@ -69,8 +83,7 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
     
-    // Usamos la ruta de "public data" para que sea compartido o "users" para privado
-    // Para tu caso de uso personal, 'users' con tu UID es lo más seguro
+    // Ruta obligatoria siguiendo las reglas del entorno
     const transCol = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
     
     const unsubTrans = onSnapshot(transCol, (snap) => {
@@ -95,7 +108,7 @@ const App = () => {
       const tDate = new Date(t.date);
       if (period === 'Este Mes') return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
       return true;
-    }).filter(t => t.entity.toLowerCase().includes(searchTerm.toLowerCase()));
+    }).filter(t => (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase()));
   }, [transactions, period, searchTerm]);
 
   const totals = useMemo(() => {
@@ -134,6 +147,23 @@ const App = () => {
       setEditingId(null);
       setFormData({ entity: '', invoiceNum: '', amount: '', type: 'ingreso', category: '', date: new Date().toISOString().split('T')[0], paymentDate: '' });
     } catch (err) { console.error("Error al guardar:", err); }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim() || !user) return;
+    const newList = [...categories, newCategoryName.trim()];
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'categories'), { list: newList });
+      setNewCategoryName('');
+    } catch (err) { console.error(err); }
+  };
+
+  const handleDeleteCategory = async (cat) => {
+    if (!user) return;
+    const newList = categories.filter(c => c !== cat);
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'categories'), { list: newList });
+    } catch (err) { console.error(err); }
   };
 
   if (loading) return (
@@ -249,10 +279,36 @@ const App = () => {
         <Plus size={32} />
       </button>
 
+      {/* Modal Settings */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[70] flex items-center justify-center p-6">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden">
+            <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+              <h2 className="font-black text-slate-800 text-xs uppercase tracking-widest italic">Categorías</h2>
+              <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-white rounded-full"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex gap-2">
+                <input type="text" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} placeholder="Nueva..." className="flex-1 px-4 py-3 bg-slate-100 rounded-xl text-xs font-bold outline-none" />
+                <button onClick={handleAddCategory} className="bg-blue-600 text-white px-4 rounded-xl font-black text-xs">+</button>
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-2">
+                {categories.map(c => (
+                  <div key={c} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-[10px] font-black text-slate-600 uppercase">{c}</span>
+                    <button onClick={() => handleDeleteCategory(c)} className="text-rose-400 hover:text-rose-600 p-1"><Trash2 size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Formulario */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-end justify-center">
-          <div className="bg-white w-full max-w-xl rounded-t-[3rem] p-8 animate-in slide-in-from-bottom duration-300 shadow-2xl">
+          <div className="bg-white w-full max-w-xl rounded-t-[3rem] p-8 animate-in slide-in-from-bottom duration-300 shadow-2xl overflow-y-auto max-h-[90vh]">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-2xl font-black text-slate-800 uppercase italic">{editingId ? 'Editar' : 'Nuevo'} Registro</h2>
               <button onClick={() => setIsModalOpen(false)} className="p-3 bg-slate-100 rounded-full text-slate-400 hover:text-slate-600"><X size={20} /></button>
