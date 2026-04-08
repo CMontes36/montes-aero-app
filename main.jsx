@@ -63,7 +63,6 @@ const App = () => {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // En GitHub no tendremos __initial_auth_token, así que usamos anónimo siempre
         await signInAnonymously(auth);
       } catch (error) { 
         console.error("Error de Auth:", error); 
@@ -83,7 +82,6 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
     
-    // Ruta obligatoria siguiendo las reglas del entorno
     const transCol = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
     
     const unsubTrans = onSnapshot(transCol, (snap) => {
@@ -106,25 +104,23 @@ const App = () => {
     const now = new Date();
     return transactions.filter(t => {
       const tDate = new Date(t.date);
-      if (period === 'Este Mes') return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
+      if (period === 'Este Mes') {
+        return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
+      }
       return true;
     }).filter(t => (t.entity || '').toLowerCase().includes(searchTerm.toLowerCase()));
   }, [transactions, period, searchTerm]);
 
   const totals = useMemo(() => {
-    const filtered = transactions.filter(t => {
-       const tDate = new Date(t.date);
-       return tDate.getMonth() === new Date().getMonth();
-    });
-    const ingresos = filtered.filter(t => t.type === 'ingreso').reduce((a, b) => a + (Number(b.amount) || 0), 0);
-    const gastos = filtered.filter(t => t.type === 'gasto').reduce((a, b) => a + (Number(b.amount) || 0), 0);
+    const ingresos = filteredData.filter(t => t.type === 'ingreso').reduce((a, b) => a + (Number(b.amount) || 0), 0);
+    const gastos = filteredData.filter(t => t.type === 'gasto').reduce((a, b) => a + (Number(b.amount) || 0), 0);
     return { ingresos, gastos, margen: ingresos - gastos };
-  }, [transactions]);
+  }, [filteredData]);
 
-  const chartData = [
+  const chartData = useMemo(() => [
     { name: 'Ingresos', valor: totals.ingresos, color: '#10b981' },
     { name: 'Gastos', valor: totals.gastos, color: '#f43f5e' }
-  ];
+  ], [totals]);
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -185,9 +181,14 @@ const App = () => {
               MONTES <span className="text-blue-600">AERO</span>
             </h1>
           </div>
-          <button onClick={() => setIsSettingsOpen(true)} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-400 shadow-sm active:scale-90 transition-all">
-            <Settings size={16} />
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowChart(!showChart)} className={`p-2.5 rounded-xl border transition-all ${showChart ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+              <BarChart3 size={16} />
+            </button>
+            <button onClick={() => setIsSettingsOpen(true)} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-400 shadow-sm active:scale-90 transition-all">
+              <Settings size={16} />
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -195,7 +196,12 @@ const App = () => {
         {/* Balance */}
         <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
           <div className="relative z-10">
-            <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest block mb-1">Balance del Mes</span>
+            <div className="flex justify-between items-start">
+               <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest block mb-1">Balance {period}</span>
+               <button onClick={() => setPeriod(period === 'Este Mes' ? 'Todo' : 'Este Mes')} className="text-[9px] font-black bg-white/10 px-2 py-1 rounded-lg hover:bg-white/20 transition-colors uppercase">
+                 {period}
+               </button>
+            </div>
             <div className="text-4xl font-black mb-6 tracking-tighter">${totals.margen.toLocaleString()}</div>
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white/5 backdrop-blur-sm p-4 rounded-2xl border border-white/10">
@@ -213,7 +219,7 @@ const App = () => {
 
         {/* Gráfico */}
         {showChart && (
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm h-64">
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm h-64 animate-in fade-in zoom-in duration-300">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -271,6 +277,11 @@ const App = () => {
               </div>
             </div>
           ))}
+          {filteredData.length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sin movimientos registrados</p>
+            </div>
+          )}
         </div>
       </main>
 
@@ -282,7 +293,7 @@ const App = () => {
       {/* Modal Settings */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[70] flex items-center justify-center p-6">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in duration-200">
             <div className="p-6 border-b flex justify-between items-center bg-slate-50">
               <h2 className="font-black text-slate-800 text-xs uppercase tracking-widest italic">Categorías</h2>
               <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-white rounded-full"><X size={18} /></button>
